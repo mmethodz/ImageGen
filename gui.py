@@ -100,6 +100,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image_label.setMinimumSize(300, 200)
         self.image_label.setStyleSheet("background: #202020; border: 1px solid #333;")
         layout.addWidget(self.image_label, stretch=1)
+        self._load_startup_image()
 
         # Edit panel using grid layout for compact arrangement
         edit_grid = QtWidgets.QGridLayout()
@@ -296,6 +297,21 @@ class MainWindow(QtWidgets.QMainWindow):
             QPushButton { background: #2a2a2a; border: 1px solid #3a3a3a; padding: 6px; }
             QPushButton:hover { background: #333333; }
         """)
+
+    def _load_startup_image(self):
+        try:
+            startup_path = Path(__file__).resolve().parent / "startup.png"
+            if startup_path.exists():
+                pix = QtGui.QPixmap(str(startup_path))
+                if not pix.isNull():
+                    self.current_pixmap = pix
+                    self._update_image_label()
+                    return
+            # fallback: clear
+            self.current_pixmap = None
+            self.image_label.setPixmap(QtGui.QPixmap())
+        except Exception:
+            pass
 
     def on_generate(self):
         # read prompt from the editable combo
