@@ -1,3 +1,7 @@
+#
+# GUI for Gemini Image Generation using PySide6
+#
+
 import os
 import json
 from pathlib import Path
