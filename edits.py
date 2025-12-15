@@ -53,6 +53,7 @@ def apply_edits_bytes(image_bytes: bytes, settings: dict) -> bytes:
       - contrast: float
       - saturation: float
       - vignette: float (0.0-1.0)
+      - sharpness: float (0.0-2.0, default 1.0 = no change)
     """
     bio = io.BytesIO(image_bytes)
 
@@ -73,6 +74,7 @@ def apply_edits_bytes(image_bytes: bytes, settings: dict) -> bytes:
     con = float(settings.get('contrast', 1.0))
     sat = float(settings.get('saturation', 1.0))
     vig = float(settings.get('vignette', 0.0))
+    shp = float(settings.get('sharpness', 1.0))
 
     if _HAS_NUMPY:
         arr = np.asarray(img).astype(np.float32)
@@ -141,6 +143,19 @@ def apply_edits_bytes(image_bytes: bytes, settings: dict) -> bytes:
                 img = _pillow_vignette(img, vig)
             except Exception:
                 pass
+
+    # Apply adjustable sharpness (1.0 = no change, <1.0 = blur, >1.0 = sharpen)
+    if shp != 1.0:
+        if shp > 1.0:
+            # Sharpen: use UnsharpMask with intensity based on sharpness value
+            # shp=1.5 → 50% sharp, shp=2.0 → 100% sharp
+            intensity = (shp - 1.0) * 200  # maps 1.0-2.0 to 0-200%
+            img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=int(intensity), threshold=3))
+        elif shp < 1.0:
+            # Blur: use GaussianBlur with radius based on how far below 1.0
+            # shp=0.5 → radius 2.5, shp=0 → radius 5
+            radius = (1.0 - shp) * 5
+            img = img.filter(ImageFilter.GaussianBlur(radius=radius))
 
     # Additional 'Film' filter: slight S-curve + warm midtones
     filt = settings.get('filter', 'None')

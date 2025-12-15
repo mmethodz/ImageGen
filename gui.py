@@ -147,7 +147,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vignette_slider.setMaximumWidth(140)
         edit_layout.addWidget(QtWidgets.QLabel("Vignette"))
         edit_layout.addWidget(self.vignette_slider)
-
+        # Sharpness slider
+        self.sharpness_slider = QtWidgets.QSlider(Qt.Horizontal)
+        self.sharpness_slider.setRange(0, 200)
+        self.sharpness_slider.setValue(100)
+        self.sharpness_slider.setMaximumWidth(140)
+        edit_layout.addWidget(QtWidgets.QLabel("Sharpness"))
+        edit_layout.addWidget(self.sharpness_slider)
         # Apply / Reset buttons
         self.apply_edits_btn = QtWidgets.QPushButton("Apply Edits")
         self.reset_edits_btn = QtWidgets.QPushButton("Reset")
@@ -177,6 +183,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.contrast_slider.valueChanged.connect(self._schedule_preview)
         self.saturation_slider.valueChanged.connect(self._schedule_preview)
         self.vignette_slider.valueChanged.connect(self._schedule_preview)
+        self.sharpness_slider.valueChanged.connect(self._schedule_preview)
         self.preset_combo.currentIndexChanged.connect(lambda _: (self._apply_preset(self.preset_combo.currentText()), self._schedule_preview()))
 
         # Bottom actions
@@ -407,6 +414,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.contrast_slider.setEnabled(enabled)
         self.saturation_slider.setEnabled(enabled)
         self.vignette_slider.setEnabled(enabled)
+        self.sharpness_slider.setEnabled(enabled)
         self.apply_edits_btn.setEnabled(enabled)
         self.reset_edits_btn.setEnabled(enabled)
 
@@ -421,6 +429,7 @@ class MainWindow(QtWidgets.QMainWindow):
             'contrast': self.contrast_slider.value() / 100.0,
             'saturation': self.saturation_slider.value() / 100.0,
             'vignette': self.vignette_slider.value() / 100.0,
+            'sharpness': self.sharpness_slider.value() / 100.0,
         }
 
         # If a previous preview thread is running, let it finish (it works on a copy).
@@ -489,11 +498,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_preset(self, preset_name: str):
         # Map presets to slider/filter settings
         presets = {
-            'Cinematic': {'filter': 'None', 'brightness': 95, 'contrast': 120, 'saturation': 110, 'vignette': 20},
-            'Filmic': {'filter': 'None', 'brightness': 95, 'contrast': 105, 'saturation': 95, 'vignette': 18},
-            'Vibrant': {'filter': 'None', 'brightness': 105, 'contrast': 110, 'saturation': 140, 'vignette': 0},
-            'Soft': {'filter': 'None', 'brightness': 105, 'contrast': 90, 'saturation': 95, 'vignette': 5},
-            'High Contrast': {'filter': 'None', 'brightness': 100, 'contrast': 140, 'saturation': 100, 'vignette': 10},
+            'Cinematic': {'filter': 'None', 'brightness': 95, 'contrast': 120, 'saturation': 110, 'vignette': 20, 'sharpness': 110},
+            'Filmic': {'filter': 'None', 'brightness': 95, 'contrast': 105, 'saturation': 95, 'vignette': 18, 'sharpness': 105},
+            'Vibrant': {'filter': 'None', 'brightness': 105, 'contrast': 110, 'saturation': 140, 'vignette': 0, 'sharpness': 115},
+            'Soft': {'filter': 'None', 'brightness': 105, 'contrast': 90, 'saturation': 95, 'vignette': 5, 'sharpness': 85},
+            'High Contrast': {'filter': 'None', 'brightness': 100, 'contrast': 140, 'saturation': 100, 'vignette': 10, 'sharpness': 120},
         }
 
         if preset_name == 'Custom' or preset_name not in presets:
@@ -505,6 +514,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.contrast_slider.setValue(p.get('contrast', 100))
         self.saturation_slider.setValue(p.get('saturation', 100))
         self.vignette_slider.setValue(p.get('vignette', 0))
+        self.sharpness_slider.setValue(p.get('sharpness', 100))
         
 
     def on_export_full(self):
@@ -525,6 +535,7 @@ class MainWindow(QtWidgets.QMainWindow):
             'contrast': self.contrast_slider.value() / 100.0,
             'saturation': self.saturation_slider.value() / 100.0,
             'vignette': self.vignette_slider.value() / 100.0,
+            'sharpness': self.sharpness_slider.value() / 100.0,
         }
 
         # disable UI controls while exporting
@@ -605,6 +616,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.contrast_slider.setValue(100)
             self.saturation_slider.setValue(100)
             self.vignette_slider.setValue(0)
+            self.sharpness_slider.setValue(100)
             # restore original image
             # Resetting is considered a change: push current to undo and clear redo
             try:
