@@ -1,6 +1,13 @@
+#
+# Gemini ImageGen v0.1
+#
+# GUI for Gemini Image Generation using PySide6
+# (C) Copyright 2025 Mika Jussila
+#
+
 import os
 import io
-from typing import Optional
+from typing import Optional, Tuple
 from google import genai
 from google.genai import types
 from PIL import Image, ImageDraw, ImageFont
@@ -11,7 +18,7 @@ class BillingRequired(Exception):
     pass
 
 
-def generate_image(prompt: str, aspect_ratio: str = "1:1") -> Optional[bytes]:
+def generate_image(prompt: str, aspect_ratio: str = "1:1") -> Tuple[Optional[bytes], str]:
     """
     Generate an image using Google Imagen API.
 
@@ -25,7 +32,7 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> Optional[bytes]:
     api_key = os.environ.get("GEMINI_API_KEY")
     
     if not api_key:
-        return _placeholder_image("(No GEMINI_API_KEY set)")
+        return _placeholder_image("(No GEMINI_API_KEY set)"), "placeholder"
 
     try:
         # Configure the Gemini client (the client will read GEMINI_API_KEY if available)
@@ -90,7 +97,7 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> Optional[bytes]:
                         image_bytes = bio.getvalue()
                     
                     if image_bytes:
-                        return image_bytes
+                        return image_bytes, model
             except Exception as model_error:
                 msg = str(model_error)
                 if "billing" in msg.lower() or "billed" in msg.lower():
@@ -98,14 +105,14 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> Optional[bytes]:
                 continue
 
         # If all models failed, fall back to placeholder with informative text
-        return _placeholder_image(f"No images generated for: {prompt[:40]} (check model access/billing)")
+        return _placeholder_image(f"No images generated for: {prompt[:40]} (check model access/billing)"), "placeholder"
 
     except Exception as e:
         # If this is a billing-related signal, re-raise so the GUI can handle it
         if isinstance(e, BillingRequired):
             raise
         error_msg = str(e)[:100]
-        return _placeholder_image(f"(API error: {error_msg})")
+        return _placeholder_image(f"(API error: {error_msg})"), "placeholder"
 
 
 

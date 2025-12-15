@@ -1,3 +1,10 @@
+#
+# Gemini ImageGen v0.1
+#
+# GUI for Gemini Image Generation using PySide6
+# (C) Copyright 2025 Mika Jussila
+#
+
 from gui import MainWindow
 from PySide6.QtWidgets import QApplication
 import sys

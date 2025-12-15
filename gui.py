@@ -1,5 +1,8 @@
 #
+# Gemini ImageGen v0.1
+#
 # GUI for Gemini Image Generation using PySide6
+# (C) Copyright 2025 Mika Jussila
 #
 
 import os
@@ -14,7 +17,7 @@ import edits
 
 
 class ImageWorker(QtCore.QObject):
-    finished = QtCore.Signal(bytes)
+    finished = QtCore.Signal(bytes, str)  # data, model
     # emit exception objects so caller can inspect type
     error = QtCore.Signal(object)
 
@@ -26,10 +29,10 @@ class ImageWorker(QtCore.QObject):
     @QtCore.Slot()
     def run(self):
         try:
-            data = api.generate_image(self.prompt, self.aspect_ratio)
+            data, model_used = api.generate_image(self.prompt, self.aspect_ratio)
             if not data:
                 raise RuntimeError("No image bytes returned")
-            self.finished.emit(data)
+            self.finished.emit(data, model_used)
         except Exception as e:
             # Emit the actual exception object so GUI can react (e.g. billing)
             self.error.emit(e)
@@ -211,6 +214,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._export_thread = None
         self._export_worker = None
         self._export_path = None  # Store export path for the worker callback
+        self._last_model_used = ""
         # Undo / redo stacks hold bytes of the 'original' image (full resolution)
         self._undo_stack = []  # list[bytes]
         self._redo_stack = []  # list[bytes]
@@ -371,13 +375,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # disable edit controls until image arrives
         self._set_edit_controls_enabled(False)
 
-    def _on_image_ready(self, image_bytes: bytes):
+    def _on_image_ready(self, image_bytes: bytes, model_name: str):
         pix = QtGui.QPixmap()
         ok = pix.loadFromData(image_bytes)
         if not ok:
             self._on_error("Failed to load image data")
             return
         self.current_pixmap = pix
+        self._last_model_used = model_name
         # store original bytes for edits
         self.original_image_bytes = image_bytes
         self.edited_image_bytes = image_bytes
@@ -397,7 +402,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Hide progress and update status
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
-        self.status_label.setText("Done")
+        if model_name:
+            self.status_label.setText(f"Done — [model: {model_name}]")
+        else:
+            self.status_label.setText("Done")
         self.generate_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
