@@ -39,7 +39,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gemini ImageGen")
-        self.resize(1000, 700)
+        self.resize(900, 650)
 
         self.current_pixmap = None
 
@@ -99,76 +99,85 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image_label.setStyleSheet("background: #202020; border: 1px solid #333;")
         layout.addWidget(self.image_label, stretch=1)
 
-        # Edit panel (filters and adjustments)
-        edit_layout = QtWidgets.QHBoxLayout()
+        # Edit panel (filters and adjustments) - split into two rows
+        edit_row1 = QtWidgets.QHBoxLayout()
 
         # Filter selector
         self.filter_combo = QtWidgets.QComboBox()
         self.filter_combo.addItems(["None", "Grayscale", "Sepia", "Blur", "Sharpen"])
         self.filter_combo.setMaximumWidth(120)
-        edit_layout.addWidget(QtWidgets.QLabel("Filter:"))
-        edit_layout.addWidget(self.filter_combo)
+        edit_row1.addWidget(QtWidgets.QLabel("Filter:"))
+        edit_row1.addWidget(self.filter_combo)
 
         # Preset selector
         self.preset_combo = QtWidgets.QComboBox()
         self.preset_combo.addItems(["Custom", "Cinematic", "Filmic", "Vibrant", "Soft", "High Contrast"])
         self.preset_combo.setMaximumWidth(140)
-        edit_layout.addWidget(QtWidgets.QLabel("Preset:"))
-        edit_layout.addWidget(self.preset_combo)
+        edit_row1.addWidget(QtWidgets.QLabel("Preset:"))
+        edit_row1.addWidget(self.preset_combo)
 
         # Brightness slider
         self.brightness_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.brightness_slider.setRange(50, 200)
         self.brightness_slider.setValue(100)
         self.brightness_slider.setMaximumWidth(140)
-        edit_layout.addWidget(QtWidgets.QLabel("Brightness"))
-        edit_layout.addWidget(self.brightness_slider)
+        edit_row1.addWidget(QtWidgets.QLabel("Brightness"))
+        edit_row1.addWidget(self.brightness_slider)
 
         # Contrast slider
         self.contrast_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.contrast_slider.setRange(50, 200)
         self.contrast_slider.setValue(100)
         self.contrast_slider.setMaximumWidth(140)
-        edit_layout.addWidget(QtWidgets.QLabel("Contrast"))
-        edit_layout.addWidget(self.contrast_slider)
+        edit_row1.addWidget(QtWidgets.QLabel("Contrast"))
+        edit_row1.addWidget(self.contrast_slider)
 
         # Saturation slider
         self.saturation_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.saturation_slider.setRange(0, 200)
         self.saturation_slider.setValue(100)
         self.saturation_slider.setMaximumWidth(140)
-        edit_layout.addWidget(QtWidgets.QLabel("Saturation"))
-        edit_layout.addWidget(self.saturation_slider)
+        edit_row1.addWidget(QtWidgets.QLabel("Saturation"))
+        edit_row1.addWidget(self.saturation_slider)
+        
+        edit_row1.addStretch()
+        layout.addLayout(edit_row1)
+        
+        # Edit panel row 2
+        edit_row2 = QtWidgets.QHBoxLayout()
 
         # Vignette slider
         self.vignette_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.vignette_slider.setRange(0, 100)
         self.vignette_slider.setValue(0)
         self.vignette_slider.setMaximumWidth(140)
-        edit_layout.addWidget(QtWidgets.QLabel("Vignette"))
-        edit_layout.addWidget(self.vignette_slider)
+        edit_row2.addWidget(QtWidgets.QLabel("Vignette"))
+        edit_row2.addWidget(self.vignette_slider)
+        
         # Sharpness slider
         self.sharpness_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.sharpness_slider.setRange(0, 200)
         self.sharpness_slider.setValue(100)
         self.sharpness_slider.setMaximumWidth(140)
-        edit_layout.addWidget(QtWidgets.QLabel("Sharpness"))
-        edit_layout.addWidget(self.sharpness_slider)
+        edit_row2.addWidget(QtWidgets.QLabel("Sharpness"))
+        edit_row2.addWidget(self.sharpness_slider)
+        
         # Apply / Reset buttons
         self.apply_edits_btn = QtWidgets.QPushButton("Apply Edits")
         self.reset_edits_btn = QtWidgets.QPushButton("Reset")
-        edit_layout.addWidget(self.apply_edits_btn)
-        edit_layout.addWidget(self.reset_edits_btn)
+        edit_row2.addWidget(self.apply_edits_btn)
+        edit_row2.addWidget(self.reset_edits_btn)
 
         # Undo / Redo buttons
         self.undo_btn = QtWidgets.QPushButton("Undo")
         self.redo_btn = QtWidgets.QPushButton("Redo")
         self.undo_btn.setEnabled(False)
         self.redo_btn.setEnabled(False)
-        edit_layout.addWidget(self.undo_btn)
-        edit_layout.addWidget(self.redo_btn)
-
-        layout.addLayout(edit_layout)
+        edit_row2.addWidget(self.undo_btn)
+        edit_row2.addWidget(self.redo_btn)
+        
+        edit_row2.addStretch()
+        layout.addLayout(edit_row2)
 
         # Initially disable edit controls until an image is loaded
         self._set_edit_controls_enabled(False)
@@ -228,10 +237,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Load prompt history from disk
         self._load_prompt_history()
         
-        # Load app settings (window size, control states)
+        # Load app settings (window size, control states) BEFORE connecting signals
         self._load_app_settings()
         
-        # Connect controls to save settings when changed
+        # Connect controls to save settings when changed (AFTER loading to prevent overwrites)
         self.lens_type.currentIndexChanged.connect(self._save_app_settings)
         self.focal_length.currentIndexChanged.connect(self._save_app_settings)
         self.aspect_ratio.currentIndexChanged.connect(self._save_app_settings)
@@ -725,6 +734,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Save app settings (window size, control states) to disk."""
         try:
             settings = {
+                'window_x': self.x(),
+                'window_y': self.y(),
                 'window_width': self.width(),
                 'window_height': self.height(),
                 'lens_type': self.lens_type.currentText(),
@@ -746,9 +757,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 with open(settings_file, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
                 if isinstance(settings, dict):
-                    # Restore window size
+                    # Block signals during load to prevent triggering saves
+                    self.lens_type.blockSignals(True)
+                    self.focal_length.blockSignals(True)
+                    self.aspect_ratio.blockSignals(True)
+                    self.highres_checkbox.blockSignals(True)
+                    
+                    # Restore window position and size
                     if 'window_width' in settings and 'window_height' in settings:
                         self.resize(settings['window_width'], settings['window_height'])
+                    if 'window_x' in settings and 'window_y' in settings:
+                        self.move(settings['window_x'], settings['window_y'])
                     
                     # Restore control states
                     if 'lens_type' in settings:
@@ -768,6 +787,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     
                     if 'highres' in settings:
                         self.highres_checkbox.setChecked(settings['highres'])
+                    
+                    # Unblock signals
+                    self.lens_type.blockSignals(False)
+                    self.focal_length.blockSignals(False)
+                    self.aspect_ratio.blockSignals(False)
+                    self.highres_checkbox.blockSignals(False)
         except Exception as e:
             print(f'Failed to load app settings: {e}')
 
