@@ -39,7 +39,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gemini ImageGen")
-        self.resize(900, 650)
+        # Set reasonable initial size and constraints
+        self.resize(800, 600)
+        self.setMinimumSize(600, 400)
 
         self.current_pixmap = None
 
@@ -47,137 +49,120 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
 
-        # Prompt area
-        prompt_layout = QtWidgets.QHBoxLayout()
-        # Prompt history combo (editable)
+        # Prompt area - split into two rows for better width management
+        # Row 1: Prompt input and Generate button
+        prompt_row1 = QtWidgets.QHBoxLayout()
         self.prompt_combo = QtWidgets.QComboBox()
         self.prompt_combo.setEditable(True)
         self.prompt_combo.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
         self.prompt_combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         self.prompt_combo.lineEdit().setPlaceholderText("Describe the image to generate...")
-        self.prompt_combo.lineEdit().returnPressed.connect(self.on_generate)  # Wire Enter key to Generate
-        prompt_layout.addWidget(self.prompt_combo)
+        self.prompt_combo.lineEdit().returnPressed.connect(self.on_generate)
+        prompt_row1.addWidget(self.prompt_combo)
         # internal last prompt (used for history on success)
         self._last_prompt = None
         
-        # Lens type selector (from Imagen docs)
-        self.lens_type = QtWidgets.QComboBox()
-        # Include a 'None' option and common lens keywords from Imagen docs
-        self.lens_type.addItems(["None", "Macro lens", "Fisheye", "Wide-angle", "Telephoto", "Telephoto zoom"]) 
-        self.lens_type.setMaximumWidth(120)
-        prompt_layout.addWidget(QtWidgets.QLabel("Lens:"))
-        prompt_layout.addWidget(self.lens_type)
-
-        # Focal length selector
-        self.focal_length = QtWidgets.QComboBox()
-        # Include 'None' and common focal lengths
-        self.focal_length.addItems(["None", "10mm", "24mm", "35mm", "50mm", "85mm", "100mm", "200mm", "60-105mm"]) 
-        self.focal_length.setMaximumWidth(90)
-        prompt_layout.addWidget(QtWidgets.QLabel("Focal:"))
-        prompt_layout.addWidget(self.focal_length)
-
-        # Aspect ratio selector
-        self.aspect_ratio = QtWidgets.QComboBox()
-        self.aspect_ratio.addItems(["1:1", "3:4", "4:3", "9:16", "16:9"])
-        self.aspect_ratio.setMaximumWidth(80)
-        prompt_layout.addWidget(QtWidgets.QLabel("Aspect:"))
-        prompt_layout.addWidget(self.aspect_ratio)
-        
-        # High-res checkbox
-        self.highres_checkbox = QtWidgets.QCheckBox("High-res")
-        prompt_layout.addWidget(self.highres_checkbox)
-        
         self.generate_btn = QtWidgets.QPushButton("🪄 Generate")
         self.generate_btn.clicked.connect(self.on_generate)
-        prompt_layout.addWidget(self.generate_btn)
+        self.generate_btn.setMinimumWidth(100)
+        prompt_row1.addWidget(self.generate_btn)
+        layout.addLayout(prompt_row1)
+        
+        # Row 2: Camera and render options
+        prompt_row2 = QtWidgets.QHBoxLayout()
+        
+        self.lens_type = QtWidgets.QComboBox()
+        self.lens_type.addItems(["None", "Macro lens", "Fisheye", "Wide-angle", "Telephoto", "Telephoto zoom"])
+        self.lens_type.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        prompt_row2.addWidget(QtWidgets.QLabel("Lens:"))
+        prompt_row2.addWidget(self.lens_type)
 
-        layout.addLayout(prompt_layout)
+        self.focal_length = QtWidgets.QComboBox()
+        self.focal_length.addItems(["None", "10mm", "24mm", "35mm", "50mm", "85mm", "100mm", "200mm", "60-105mm"])
+        self.focal_length.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        prompt_row2.addWidget(QtWidgets.QLabel("Focal:"))
+        prompt_row2.addWidget(self.focal_length)
+
+        self.aspect_ratio = QtWidgets.QComboBox()
+        self.aspect_ratio.addItems(["1:1", "3:4", "4:3", "9:16", "16:9"])
+        self.aspect_ratio.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        prompt_row2.addWidget(QtWidgets.QLabel("Aspect:"))
+        prompt_row2.addWidget(self.aspect_ratio)
+        
+        self.highres_checkbox = QtWidgets.QCheckBox("High-res")
+        prompt_row2.addWidget(self.highres_checkbox)
+        
+        prompt_row2.addStretch()
+        layout.addLayout(prompt_row2)
 
         # Image display
         self.image_label = QtWidgets.QLabel(alignment=Qt.AlignCenter)
-        self.image_label.setMinimumSize(400, 300)
+        self.image_label.setMinimumSize(300, 200)
         self.image_label.setStyleSheet("background: #202020; border: 1px solid #333;")
         layout.addWidget(self.image_label, stretch=1)
 
-        # Edit panel (filters and adjustments) - split into two rows
-        edit_row1 = QtWidgets.QHBoxLayout()
+        # Edit panel using grid layout for compact arrangement
+        edit_grid = QtWidgets.QGridLayout()
+        edit_grid.setColumnStretch(1, 1)  # Allow sliders to expand
+        edit_grid.setColumnStretch(3, 1)
+        edit_grid.setColumnStretch(5, 1)
 
-        # Filter selector
+        # Row 0: Filter, Preset, Brightness
         self.filter_combo = QtWidgets.QComboBox()
         self.filter_combo.addItems(["None", "Grayscale", "Sepia", "Blur", "Sharpen"])
-        self.filter_combo.setMaximumWidth(120)
-        edit_row1.addWidget(QtWidgets.QLabel("Filter:"))
-        edit_row1.addWidget(self.filter_combo)
+        edit_grid.addWidget(QtWidgets.QLabel("Filter:"), 0, 0)
+        edit_grid.addWidget(self.filter_combo, 0, 1)
 
-        # Preset selector
         self.preset_combo = QtWidgets.QComboBox()
         self.preset_combo.addItems(["Custom", "Cinematic", "Filmic", "Vibrant", "Soft", "High Contrast"])
-        self.preset_combo.setMaximumWidth(140)
-        edit_row1.addWidget(QtWidgets.QLabel("Preset:"))
-        edit_row1.addWidget(self.preset_combo)
+        edit_grid.addWidget(QtWidgets.QLabel("Preset:"), 0, 2)
+        edit_grid.addWidget(self.preset_combo, 0, 3)
 
-        # Brightness slider
         self.brightness_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.brightness_slider.setRange(50, 200)
         self.brightness_slider.setValue(100)
-        self.brightness_slider.setMaximumWidth(140)
-        edit_row1.addWidget(QtWidgets.QLabel("Brightness"))
-        edit_row1.addWidget(self.brightness_slider)
+        edit_grid.addWidget(QtWidgets.QLabel("Bright:"), 0, 4)
+        edit_grid.addWidget(self.brightness_slider, 0, 5)
 
-        # Contrast slider
+        # Row 1: Contrast, Saturation, Vignette
         self.contrast_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.contrast_slider.setRange(50, 200)
         self.contrast_slider.setValue(100)
-        self.contrast_slider.setMaximumWidth(140)
-        edit_row1.addWidget(QtWidgets.QLabel("Contrast"))
-        edit_row1.addWidget(self.contrast_slider)
+        edit_grid.addWidget(QtWidgets.QLabel("Contrast:"), 1, 0)
+        edit_grid.addWidget(self.contrast_slider, 1, 1)
 
-        # Saturation slider
         self.saturation_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.saturation_slider.setRange(0, 200)
         self.saturation_slider.setValue(100)
-        self.saturation_slider.setMaximumWidth(140)
-        edit_row1.addWidget(QtWidgets.QLabel("Saturation"))
-        edit_row1.addWidget(self.saturation_slider)
-        
-        edit_row1.addStretch()
-        layout.addLayout(edit_row1)
-        
-        # Edit panel row 2
-        edit_row2 = QtWidgets.QHBoxLayout()
+        edit_grid.addWidget(QtWidgets.QLabel("Sat:"), 1, 2)
+        edit_grid.addWidget(self.saturation_slider, 1, 3)
 
-        # Vignette slider
         self.vignette_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.vignette_slider.setRange(0, 100)
         self.vignette_slider.setValue(0)
-        self.vignette_slider.setMaximumWidth(140)
-        edit_row2.addWidget(QtWidgets.QLabel("Vignette"))
-        edit_row2.addWidget(self.vignette_slider)
-        
-        # Sharpness slider
+        edit_grid.addWidget(QtWidgets.QLabel("Vignette:"), 1, 4)
+        edit_grid.addWidget(self.vignette_slider, 1, 5)
+
+        # Row 2: Sharpness and buttons
         self.sharpness_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.sharpness_slider.setRange(0, 200)
         self.sharpness_slider.setValue(100)
-        self.sharpness_slider.setMaximumWidth(140)
-        edit_row2.addWidget(QtWidgets.QLabel("Sharpness"))
-        edit_row2.addWidget(self.sharpness_slider)
-        
-        # Apply / Reset buttons
-        self.apply_edits_btn = QtWidgets.QPushButton("Apply Edits")
-        self.reset_edits_btn = QtWidgets.QPushButton("Reset")
-        edit_row2.addWidget(self.apply_edits_btn)
-        edit_row2.addWidget(self.reset_edits_btn)
+        edit_grid.addWidget(QtWidgets.QLabel("Sharp:"), 2, 0)
+        edit_grid.addWidget(self.sharpness_slider, 2, 1)
 
-        # Undo / Redo buttons
+        self.apply_edits_btn = QtWidgets.QPushButton("Apply")
+        self.reset_edits_btn = QtWidgets.QPushButton("Reset")
+        edit_grid.addWidget(self.apply_edits_btn, 2, 2)
+        edit_grid.addWidget(self.reset_edits_btn, 2, 3)
+
         self.undo_btn = QtWidgets.QPushButton("Undo")
         self.redo_btn = QtWidgets.QPushButton("Redo")
         self.undo_btn.setEnabled(False)
         self.redo_btn.setEnabled(False)
-        edit_row2.addWidget(self.undo_btn)
-        edit_row2.addWidget(self.redo_btn)
-        
-        edit_row2.addStretch()
-        layout.addLayout(edit_row2)
+        edit_grid.addWidget(self.undo_btn, 2, 4)
+        edit_grid.addWidget(self.redo_btn, 2, 5)
+
+        layout.addLayout(edit_grid)
 
         # Initially disable edit controls until an image is loaded
         self._set_edit_controls_enabled(False)
