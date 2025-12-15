@@ -216,8 +216,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # Debounce timer for preview updates to avoid flooding worker threads
         self._preview_timer = QtCore.QTimer()
         self._preview_timer.setSingleShot(True)
-        self._preview_timer.setInterval(150)  # milliseconds
+        # Slightly longer debounce to avoid thread storms while dragging
+        self._preview_timer.setInterval(200)  # milliseconds
         self._preview_timer.timeout.connect(self._start_preview_worker)
+        # Preview state to avoid overlapping threads
+        self._preview_running = False
+        self._preview_pending_settings = None
+        self._preview_thread = None
+        self._preview_worker = None
+        self._preview_token_counter = 0
+        self._active_preview_token = -1
         
         # Load prompt history from disk
         self._load_prompt_history()
@@ -232,11 +240,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.highres_checkbox.stateChanged.connect(self._save_app_settings)
 
     class ThumbnailWorker(QtCore.QObject):
-        finished = QtCore.Signal(bytes)
-        error = QtCore.Signal(object)
+        finished = QtCore.Signal(int, bytes)  # token, data
+        error = QtCore.Signal(int, object)    # token, exc
 
-        def __init__(self, image_bytes: bytes, settings: dict, max_size: int = 512):
+        def __init__(self, token: int, image_bytes: bytes, settings: dict, max_size: int = 512):
             super().__init__()
+            self.token = token
             self.image_bytes = image_bytes
             self.settings = settings
             self.max_size = max_size
@@ -244,11 +253,23 @@ class MainWindow(QtWidgets.QMainWindow):
         @QtCore.Slot()
         def run(self):
             try:
-                # Apply edits to full-resolution image (preserve quality for preview and save/export)
-                edited = edits.apply_edits_bytes(self.image_bytes, self.settings)
-                self.finished.emit(edited)
+                # Downscale for preview to keep the pipeline light
+                img = Image.open(io.BytesIO(self.image_bytes)).convert('RGB')
+                w, h = img.size
+                if max(w, h) > self.max_size:
+                    scale = self.max_size / float(max(w, h))
+                    new_w = int(w * scale)
+                    new_h = int(h * scale)
+                    img = img.resize((new_w, new_h), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format='PNG')
+                buf.seek(0)
+                resized_bytes = buf.getvalue()
+
+                edited = edits.apply_edits_bytes(resized_bytes, self.settings)
+                self.finished.emit(self.token, edited)
             except Exception as e:
-                self.error.emit(e)
+                self.error.emit(self.token, e)
 
     class FullExportWorker(QtCore.QObject):
         finished = QtCore.Signal(bytes)
@@ -435,11 +456,21 @@ class MainWindow(QtWidgets.QMainWindow):
             'sharpness': self.sharpness_slider.value() / 100.0,
         }
 
-        # If a previous preview thread is running, let it finish (it works on a copy).
-        # Start a new thumbnail worker to keep UI responsive.
+        # If a preview is already running, store the latest settings and let the current run finish
+        if getattr(self, '_preview_running', False):
+            self._preview_pending_settings = settings
+            return
+
         try:
+            self._preview_running = True
+            self._preview_pending_settings = None
+
+            self._preview_token_counter += 1
+            token = self._preview_token_counter
+            self._active_preview_token = token
+
             # clean up old thread objects
-            if self._preview_thread is not None:
+            if getattr(self, '_preview_thread', None) is not None:
                 try:
                     self._preview_thread.quit()
                     self._preview_thread.wait(50)
@@ -447,7 +478,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     pass
 
             self._preview_thread = QtCore.QThread()
-            self._preview_worker = MainWindow.ThumbnailWorker(self.original_image_bytes, settings, max_size=512)
+            self._preview_worker = MainWindow.ThumbnailWorker(token, self.original_image_bytes, settings, max_size=640)
             self._preview_worker.moveToThread(self._preview_thread)
             self._preview_thread.started.connect(self._preview_worker.run)
             self._preview_worker.finished.connect(self._on_preview_ready)
@@ -455,8 +486,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._preview_worker.finished.connect(self._preview_thread.quit)
             self._preview_worker.error.connect(self._preview_thread.quit)
             self._preview_thread.finished.connect(self._preview_thread.deleteLater)
+            self._preview_thread.finished.connect(self._clear_preview_thread)
             self._preview_thread.start()
         except Exception as e:
+            self._preview_running = False
             print('Edit preview failed (thread):', e)
 
     def _schedule_preview(self):
@@ -471,7 +504,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Timer callback: start the heavy preview worker
         self._preview_edits()
 
-    def _on_preview_ready(self, edited_bytes: bytes):
+    def _clear_preview_thread(self):
+        self._preview_thread = None
+
+    def _on_preview_ready(self, token: int, edited_bytes: bytes):
+        # Ignore stale previews
+        if token != self._active_preview_token:
+            return
         try:
             pix = QtGui.QPixmap()
             if pix.loadFromData(edited_bytes):
@@ -480,9 +519,78 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.edited_image_bytes = edited_bytes
         except Exception as e:
             print('Preview apply failed:', e)
+        finally:
+            self._preview_running = False
+            # If new settings arrived while running, kick off another preview
+            if self._preview_pending_settings:
+                pending = self._preview_pending_settings
+                self._preview_pending_settings = None
+                # Re-run with pending settings
+                self._preview_running = True
+                try:
+                    if getattr(self, '_preview_thread', None) is not None:
+                        try:
+                            self._preview_thread.quit()
+                            self._preview_thread.wait(50)
+                        except Exception:
+                            pass
 
-    def _on_preview_error(self, exc: object):
+                    self._preview_token_counter += 1
+                    token = self._preview_token_counter
+                    self._active_preview_token = token
+
+                    self._preview_thread = QtCore.QThread()
+                    self._preview_worker = MainWindow.ThumbnailWorker(token, self.original_image_bytes, pending, max_size=640)
+                    self._preview_worker.moveToThread(self._preview_thread)
+                    self._preview_thread.started.connect(self._preview_worker.run)
+                    self._preview_worker.finished.connect(self._on_preview_ready)
+                    self._preview_worker.error.connect(self._on_preview_error)
+                    self._preview_worker.finished.connect(self._preview_thread.quit)
+                    self._preview_worker.error.connect(self._preview_thread.quit)
+                    self._preview_thread.finished.connect(self._preview_thread.deleteLater)
+                    self._preview_thread.finished.connect(self._clear_preview_thread)
+                    self._preview_thread.start()
+                except Exception as e:
+                    self._preview_running = False
+                    print('Preview restart failed:', e)
+
+    def _on_preview_error(self, token: int, exc: object):
+        # Ignore stale results
+        if token != self._active_preview_token:
+            return
         print('Preview worker error:', exc)
+        self._preview_running = False
+        if self._preview_pending_settings:
+            # Try again with the most recent pending settings
+            pending = self._preview_pending_settings
+            self._preview_pending_settings = None
+            self._preview_running = True
+            try:
+                if getattr(self, '_preview_thread', None) is not None:
+                    try:
+                        self._preview_thread.quit()
+                        self._preview_thread.wait(50)
+                    except Exception:
+                        pass
+
+                self._preview_token_counter += 1
+                new_token = self._preview_token_counter
+                self._active_preview_token = new_token
+
+                self._preview_thread = QtCore.QThread()
+                self._preview_worker = MainWindow.ThumbnailWorker(new_token, self.original_image_bytes, pending, max_size=640)
+                self._preview_worker.moveToThread(self._preview_thread)
+                self._preview_thread.started.connect(self._preview_worker.run)
+                self._preview_worker.finished.connect(self._on_preview_ready)
+                self._preview_worker.error.connect(self._on_preview_error)
+                self._preview_worker.finished.connect(self._preview_thread.quit)
+                self._preview_worker.error.connect(self._preview_thread.quit)
+                self._preview_thread.finished.connect(self._preview_thread.deleteLater)
+                self._preview_thread.finished.connect(self._clear_preview_thread)
+                self._preview_thread.start()
+            except Exception as e:
+                self._preview_running = False
+                print('Preview retry failed:', e)
 
     def _apply_edits_to_original(self):
         # Finalize edits (already applied to preview), keep edited bytes as original for subsequent edits
@@ -784,6 +892,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         """Save app settings when window is closed."""
         self._save_app_settings()
+        # Stop preview thread if running
+        try:
+            if getattr(self, '_preview_thread', None) is not None:
+                self._preview_thread.quit()
+                self._preview_thread.wait(100)
+        except Exception:
+            pass
+        # Stop export thread if running
+        try:
+            if getattr(self, '_export_thread', None) is not None:
+                self._export_thread.quit()
+                self._export_thread.wait(100)
+        except Exception:
+            pass
         event.accept()
     
     def _undo(self):
