@@ -87,7 +87,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.highres_checkbox = QtWidgets.QCheckBox("High-res")
         prompt_layout.addWidget(self.highres_checkbox)
         
-        self.generate_btn = QtWidgets.QPushButton("Generate")
+        self.generate_btn = QtWidgets.QPushButton("🪄 Generate")
         self.generate_btn.clicked.connect(self.on_generate)
         prompt_layout.addWidget(self.generate_btn)
 
@@ -227,6 +227,15 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Load prompt history from disk
         self._load_prompt_history()
+        
+        # Load app settings (window size, control states)
+        self._load_app_settings()
+        
+        # Connect controls to save settings when changed
+        self.lens_type.currentIndexChanged.connect(self._save_app_settings)
+        self.focal_length.currentIndexChanged.connect(self._save_app_settings)
+        self.aspect_ratio.currentIndexChanged.connect(self._save_app_settings)
+        self.highres_checkbox.stateChanged.connect(self._save_app_settings)
 
     class ThumbnailWorker(QtCore.QObject):
         finished = QtCore.Signal(bytes)
@@ -678,6 +687,15 @@ class MainWindow(QtWidgets.QMainWindow):
         data_dir = Path(app_data)
         data_dir.mkdir(parents=True, exist_ok=True)
         return data_dir / "prompt_history.json"
+    
+    def _get_settings_file_path(self) -> Path:
+        """Get the path to the app settings JSON file."""
+        app_data = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
+        if not app_data:
+            app_data = os.path.expanduser("~/.gemini_imagegen")
+        data_dir = Path(app_data)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir / "app_settings.json"
 
     def _save_prompt_history(self):
         """Save current prompt history to disk."""
@@ -702,7 +720,62 @@ class MainWindow(QtWidgets.QMainWindow):
                             self.prompt_combo.addItem(prompt)
         except Exception as e:
             print(f'Failed to load prompt history: {e}')
+    
+    def _save_app_settings(self):
+        """Save app settings (window size, control states) to disk."""
+        try:
+            settings = {
+                'window_width': self.width(),
+                'window_height': self.height(),
+                'lens_type': self.lens_type.currentText(),
+                'focal_length': self.focal_length.currentText(),
+                'aspect_ratio': self.aspect_ratio.currentText(),
+                'highres': self.highres_checkbox.isChecked(),
+            }
+            settings_file = self._get_settings_file_path()
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f'Failed to save app settings: {e}')
+    
+    def _load_app_settings(self):
+        """Load app settings from disk on startup."""
+        try:
+            settings_file = self._get_settings_file_path()
+            if settings_file.exists():
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                if isinstance(settings, dict):
+                    # Restore window size
+                    if 'window_width' in settings and 'window_height' in settings:
+                        self.resize(settings['window_width'], settings['window_height'])
+                    
+                    # Restore control states
+                    if 'lens_type' in settings:
+                        idx = self.lens_type.findText(settings['lens_type'])
+                        if idx >= 0:
+                            self.lens_type.setCurrentIndex(idx)
+                    
+                    if 'focal_length' in settings:
+                        idx = self.focal_length.findText(settings['focal_length'])
+                        if idx >= 0:
+                            self.focal_length.setCurrentIndex(idx)
+                    
+                    if 'aspect_ratio' in settings:
+                        idx = self.aspect_ratio.findText(settings['aspect_ratio'])
+                        if idx >= 0:
+                            self.aspect_ratio.setCurrentIndex(idx)
+                    
+                    if 'highres' in settings:
+                        self.highres_checkbox.setChecked(settings['highres'])
+        except Exception as e:
+            print(f'Failed to load app settings: {e}')
 
+    def closeEvent(self, event):
+        """Save app settings when window is closed."""
+        self._save_app_settings()
+        event.accept()
+    
     def _undo(self):
         if not self._undo_stack:
             return
