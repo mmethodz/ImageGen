@@ -7,6 +7,9 @@
 
 import os
 import json
+import tempfile
+import time
+import urllib.parse
 from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt
@@ -195,6 +198,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.export_btn.clicked.connect(self.on_export_full)
         self.export_btn.setEnabled(False)
         bottom_layout.addWidget(self.export_btn)
+
+        self.copy_btn = QtWidgets.QPushButton("Copy")
+        self.copy_btn.setEnabled(False)
+        self.copy_btn.clicked.connect(self._copy_image_to_clipboard)
+        bottom_layout.addWidget(self.copy_btn)
 
         # Progress indicator (indeterminate)
         self.progress = QtWidgets.QProgressBar()
@@ -409,6 +417,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.generate_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
+        self.copy_btn.setEnabled(True)
 
     def _on_error(self, exc: object):
         # Hide progress on error
@@ -931,6 +940,65 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
         event.accept()
+
+    # --- Sharing helpers ---
+    def _get_current_image_bytes(self):
+        if getattr(self, 'edited_image_bytes', None):
+            return self.edited_image_bytes
+        if getattr(self, 'original_image_bytes', None):
+            return self.original_image_bytes
+        return None
+
+    def _write_temp_share_file(self) -> Path:
+        data = self._get_current_image_bytes()
+        if not data:
+            raise RuntimeError("No image to share")
+        share_dir = Path(tempfile.gettempdir()) / "gemini_imagegen_share"
+        share_dir.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time())
+        path = share_dir / f"shared_{ts}.png"
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def _share_via_email(self):
+        try:
+            path = self._write_temp_share_file()
+            body = urllib.parse.quote(f"Image saved at: {path}\nAttach this file to your email.")
+            url = QtCore.QUrl(f"mailto:?subject=Shared Image&body={body}")
+            QtGui.QDesktopServices.openUrl(url)
+            self.status_label.setText("Opening email client for share")
+        except Exception as e:
+            self.status_label.setText("Share via email failed")
+            print("Share email failed", e)
+
+    def _share_via_viber(self):
+        try:
+            path = self._write_temp_share_file()
+            text = urllib.parse.quote(f"Sharing image: {path}")
+            url = QtCore.QUrl(f"viber://forward?text={text}")
+            opened = QtGui.QDesktopServices.openUrl(url)
+            if opened:
+                self.status_label.setText("Sharing via Viber")
+            else:
+                self.status_label.setText("Viber not installed or URL handler missing")
+        except Exception as e:
+            self.status_label.setText("Share via Viber failed")
+            print("Share Viber failed", e)
+
+    def _copy_image_to_clipboard(self):
+        try:
+            data = self._get_current_image_bytes()
+            if not data:
+                raise RuntimeError("No image to copy")
+            img = QtGui.QImage()
+            if not img.loadFromData(data):
+                raise RuntimeError("Could not load image for clipboard")
+            QtGui.QGuiApplication.clipboard().setImage(img)
+            self.status_label.setText("Image copied to clipboard")
+        except Exception as e:
+            self.status_label.setText("Copy to clipboard failed")
+            print("Copy clipboard failed", e)
     
     def _undo(self):
         if not self._undo_stack:
