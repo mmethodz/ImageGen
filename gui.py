@@ -73,6 +73,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.generate_btn.clicked.connect(self.on_generate)
         self.generate_btn.setMinimumWidth(100)
         prompt_row1.addWidget(self.generate_btn)
+        
+        self.load_image_btn = QtWidgets.QPushButton("Load Image")
+        self.load_image_btn.clicked.connect(self.on_load_image)
+        self.load_image_btn.setMinimumWidth(100)
+        prompt_row1.addWidget(self.load_image_btn)
+        
         layout.addLayout(prompt_row1)
         
         # Row 2: Camera and render options
@@ -1105,3 +1111,42 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.status_label.setText(f"Saved to {path}")
             except Exception as e:
                 QtWidgets.QMessageBox.warning(self, "Save failed", str(e))
+
+    def on_load_image(self):
+        default_dir = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.PicturesLocation) or os.path.expanduser("~/Pictures")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Load Image", default_dir, "Image Files (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*)")
+        if not path:
+            return
+        try:
+            with open(path, 'rb') as f:
+                image_bytes = f.read()
+            
+            # Validate it's a valid image
+            pix = QtGui.QPixmap()
+            if not pix.loadFromData(image_bytes):
+                raise RuntimeError("Failed to load image")
+            
+            # Store and display
+            self.current_pixmap = pix
+            self.original_image_bytes = image_bytes
+            self.edited_image_bytes = image_bytes
+            self._last_model_used = "loaded"
+            
+            # Clear undo/redo
+            self._undo_stack.clear()
+            self._redo_stack.clear()
+            self._update_undo_redo_buttons()
+            
+            # Enable edit controls
+            self._set_edit_controls_enabled(True)
+            self._update_image_label()
+            
+            # Update buttons
+            self.save_btn.setEnabled(True)
+            self.export_btn.setEnabled(True)
+            self.copy_btn.setEnabled(True)
+            
+            self.status_label.setText(f"Loaded: {os.path.basename(path)}")
+        except Exception as e:
+            self.status_label.setText(f"Failed to load image: {str(e)}")
+            QtWidgets.QMessageBox.warning(self, "Load failed", str(e))
