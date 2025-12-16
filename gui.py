@@ -45,6 +45,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gemini ImageGen")
+
         # Set reasonable initial size and constraints
         self.resize(800, 600)
         self.setMinimumSize(600, 400)
