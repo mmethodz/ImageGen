@@ -1,5 +1,5 @@
 #
-# Gemini ImageGen v0.1
+# Gemini ImageGen v0.1.3
 #
 # GUI for Gemini Image Generation using PySide6
 # (C) Copyright 2025 Mika Jussila
