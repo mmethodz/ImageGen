@@ -211,6 +211,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.copy_btn.clicked.connect(self._copy_image_to_clipboard)
         bottom_layout.addWidget(self.copy_btn)
 
+        self.crop_btn = QtWidgets.QPushButton("Crop")
+        self.crop_btn.setEnabled(False)
+        self.crop_btn.clicked.connect(self.on_crop)
+        bottom_layout.addWidget(self.crop_btn)
+
         # Progress indicator (indeterminate)
         self.progress = QtWidgets.QProgressBar()
         self.progress.setVisible(False)
@@ -425,6 +430,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.save_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         self.copy_btn.setEnabled(True)
+        self.crop_btn.setEnabled(True)
 
     def _on_error(self, exc: object):
         # Hide progress on error
@@ -1145,8 +1151,223 @@ class MainWindow(QtWidgets.QMainWindow):
             self.save_btn.setEnabled(True)
             self.export_btn.setEnabled(True)
             self.copy_btn.setEnabled(True)
+            self.crop_btn.setEnabled(True)
             
             self.status_label.setText(f"Loaded: {os.path.basename(path)}")
         except Exception as e:
             self.status_label.setText(f"Failed to load image: {str(e)}")
             QtWidgets.QMessageBox.warning(self, "Load failed", str(e))
+
+    def on_crop(self):
+        if not self.current_pixmap or not getattr(self, 'original_image_bytes', None):
+            return
+        
+        try:
+            dialog = CropDialog(self.original_image_bytes, self)
+            if dialog.exec():
+                cropped_bytes = dialog.get_cropped_bytes()
+                if cropped_bytes:
+                    self.original_image_bytes = cropped_bytes
+                    self.edited_image_bytes = cropped_bytes
+                    
+                    pix = QtGui.QPixmap()
+                    pix.loadFromData(cropped_bytes)
+                    self.current_pixmap = pix
+                    self._update_image_label()
+                    
+                    self._undo_stack.clear()
+                    self._redo_stack.clear()
+                    self._update_undo_redo_buttons()
+                    
+                    img = Image.open(io.BytesIO(cropped_bytes))
+                    self.status_label.setText(f"Cropped to {img.width}×{img.height}")
+        except Exception as e:
+            self.status_label.setText(f"Crop failed: {str(e)}")
+            print("Crop error:", e)
+
+
+class CropDialog(QtWidgets.QDialog):
+    def __init__(self, image_bytes: bytes, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Crop Image")
+        self.setGeometry(100, 100, 800, 600)
+        self.image_bytes = image_bytes
+        self.cropped_bytes = None
+        
+        self.img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        
+        layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Canvas for crop (fill available space)
+        self.canvas = CropCanvas(self.img, self)
+        layout.addWidget(self.canvas, 1)
+        
+        # Status bar at bottom
+        status_layout = QtWidgets.QHBoxLayout()
+        status_layout.setContentsMargins(8, 4, 8, 4)
+        status_layout.setSpacing(0)
+        self.status_label = QtWidgets.QLabel("Drag to select • Enter to apply • Esc to cancel")
+        self.status_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        status_layout.addWidget(self.status_label)
+        status_widget = QtWidgets.QWidget()
+        status_widget.setLayout(status_layout)
+        status_widget.setStyleSheet("background-color: #1e1e1e; border-top: 1px solid #333;")
+        status_widget.setFixedHeight(24)
+        layout.addWidget(status_widget)
+        
+        self.setLayout(layout)
+        self.setFocus()
+        self.canvas.setFocus()
+        
+        # Connect signals
+        self.canvas.crop_applied.connect(self._on_crop_applied)
+        self.canvas.crop_cancelled.connect(self.reject)
+    
+    def _on_crop_applied(self, box):
+        """Handle crop box application."""
+        if not box:
+            return
+        x1, y1, x2, y2 = box
+        w, h = self.img.size
+        left = int(x1 * w)
+        top = int(y1 * h)
+        right = int(x2 * w)
+        bottom = int(y2 * h)
+        
+        # Validate bounds
+        left = max(0, min(left, w - 1))
+        top = max(0, min(top, h - 1))
+        right = max(left + 1, min(right, w))
+        bottom = max(top + 1, min(bottom, h))
+        
+        cropped = self.img.crop((left, top, right, bottom))
+        buf = io.BytesIO()
+        cropped.save(buf, format='PNG')
+        buf.seek(0)
+        self.cropped_bytes = buf.getvalue()
+        self.accept()
+    
+    def get_cropped_bytes(self):
+        return self.cropped_bytes
+
+
+class CropCanvas(QtWidgets.QWidget):
+    crop_applied = QtCore.Signal(tuple)  # (x1, y1, x2, y2) in [0,1]
+    crop_cancelled = QtCore.Signal()
+    
+    def __init__(self, pil_img: Image.Image, parent=None):
+        super().__init__(parent)
+        self.pil_img = pil_img
+        self.setMinimumSize(400, 300)
+        self.setFocusPolicy(Qt.StrongFocus)
+        
+        # Convert PIL to QPixmap
+        buf = io.BytesIO()
+        pil_img.save(buf, format='PNG')
+        buf.seek(0)
+        self.qpixmap = QtGui.QPixmap()
+        self.qpixmap.loadFromData(buf.getvalue())
+        
+        # Crop box: (x1, y1, x2, y2) in normalized [0, 1]
+        self.crop_box = None
+        self.dragging = False
+        self.drag_start = None
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            norm = self._screen_to_norm(event.pos())
+            self.drag_start = norm
+            self.crop_box = (norm[0], norm[1], norm[0], norm[1])
+            self.update()
+    
+    def mouseMoveEvent(self, event):
+        if self.dragging and self.drag_start:
+            norm = self._screen_to_norm(event.pos())
+            x1, y1 = self.drag_start
+            x2, y2 = norm
+            self.crop_box = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+            self.update()
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.dragging = False
+            self.update()
+    
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if self.crop_box:
+                self.crop_applied.emit(self.crop_box)
+        elif event.key() == Qt.Key_Escape:
+            self.crop_cancelled.emit()
+    
+    def paintEvent(self, event):
+        try:
+            painter = QtGui.QPainter(self)
+            painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+            
+            # Calculate scaled pixmap and position
+            canvas_rect = self.rect()
+            scaled = self.qpixmap.scaledToWidth(canvas_rect.width(), Qt.SmoothTransformation) if self.qpixmap.width() > 0 else self.qpixmap
+            if scaled.height() > canvas_rect.height():
+                scaled = self.qpixmap.scaledToHeight(canvas_rect.height(), Qt.SmoothTransformation)
+            
+            offset_x = (canvas_rect.width() - scaled.width()) // 2
+            offset_y = (canvas_rect.height() - scaled.height()) // 2
+            
+            # Draw image
+            painter.drawPixmap(offset_x, offset_y, scaled)
+            
+            # Draw crop overlay and box if active
+            if self.crop_box:
+                x1, y1, x2, y2 = self.crop_box
+                
+                # Clamp to [0, 1]
+                x1 = max(0, min(1, x1))
+                y1 = max(0, min(1, y1))
+                x2 = max(0, min(1, x2))
+                y2 = max(0, min(1, y2))
+                
+                # Screen coordinates
+                rect_x = offset_x + x1 * scaled.width()
+                rect_y = offset_y + y1 * scaled.height()
+                rect_w = (x2 - x1) * scaled.width()
+                rect_h = (y2 - y1) * scaled.height()
+                
+                # Draw semi-transparent dark overlay on outer regions
+                painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+                painter.fillRect(canvas_rect, QtGui.QColor(0, 0, 0, 180))
+                
+                # Draw semi-transparent green fill in crop box to reveal image
+                painter.setCompositionMode(QtGui.QPainter.CompositionMode_DestinationOut)
+                painter.fillRect(int(rect_x), int(rect_y), int(rect_w), int(rect_h), QtGui.QColor(0, 0, 0, 180))
+                painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+                
+                # Draw translucent green border on crop box
+                pen = QtGui.QPen(QtGui.QColor(0, 255, 0, 200), 2)
+                painter.setPen(pen)
+                painter.drawRect(int(rect_x), int(rect_y), int(rect_w), int(rect_h))
+            
+            painter.end()
+        except Exception as e:
+            print("Paint error:", e)
+    
+    def _screen_to_norm(self, pos: QtCore.QPoint) -> tuple:
+        """Convert screen position to normalized image coords [0, 1]."""
+        canvas_rect = self.rect()
+        scaled = self.qpixmap.scaledToWidth(canvas_rect.width(), Qt.SmoothTransformation) if self.qpixmap.width() > 0 else self.qpixmap
+        if scaled.height() > canvas_rect.height():
+            scaled = self.qpixmap.scaledToHeight(canvas_rect.height(), Qt.SmoothTransformation)
+        
+        offset_x = (canvas_rect.width() - scaled.width()) // 2
+        offset_y = (canvas_rect.height() - scaled.height()) // 2
+        
+        local_x = max(0, min(pos.x() - offset_x, scaled.width()))
+        local_y = max(0, min(pos.y() - offset_y, scaled.height()))
+        
+        norm_x = local_x / scaled.width() if scaled.width() > 0 else 0
+        norm_y = local_y / scaled.height() if scaled.height() > 0 else 0
+        
+        return (norm_x, norm_y)

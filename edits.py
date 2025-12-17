@@ -36,8 +36,9 @@ def _numpy_vignette(img: Image.Image, vig: float) -> Image.Image:
     y = np.linspace(-1.0, 1.0, h)[:, None]
     x = np.linspace(-1.0, 1.0, w)[None, :]
     d = np.sqrt(x * x + y * y)
-    # mask: 1 in center, decreased toward edges; vig influences strength
-    mask = 1.0 - np.clip(d * vig * 1.5, 0.0, 1.0)
+    # mask: 1 in center (larger untouched radius), decreased toward edges
+    # increased from 0.5 to 0.65 for even larger untouched center area
+    mask = 1.0 - np.clip((d - 0.65) * vig * 2.0, 0.0, 1.0)
     mask = mask[..., None]
     arr = arr * mask
     arr = np.clip(arr, 0, 255).astype(np.uint8)
